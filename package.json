@@ -1,0 +1,5 @@
+{
+  "name": "camelliera-host",
+  "private": true,
+  "workspaces": ["apps/*"]
+}
