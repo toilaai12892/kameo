@@ -1,0 +1,10 @@
+import express from 'express'; import Docker from 'dockerode'; import fs from 'node:fs'; import path from 'node:path';
+const app=express();app.use(express.json());const docker=new Docker({socketPath:'/var/run/docker.sock'});const secret=process.env.WORKER_SECRET||'';const root=process.env.BOTS_ROOT||'/opt/camelliera/bots';fs.mkdirSync(root,{recursive:true});
+app.use((req,res,next)=>{if(req.headers.authorization!==`Bearer ${secret}`)return res.status(401).json({error:'unauthorized'});next()});
+function cname(id:string){return `camelliera_${id.replace(/[^a-zA-Z0-9_.-]/g,'_')}`}
+app.get('/health',(_,res)=>res.json({ok:true,node:'VN-01'}));
+app.post('/bots/:id/start',async(req,res)=>{try{const id=req.params.id,name=cname(id);const dir=path.join(root,id);if(!fs.existsSync(path.join(dir,'package.json')))return res.status(400).json({error:`Put bot files in ${dir} first`});let c;try{c=docker.getContainer(name);await c.inspect()}catch{c=await docker.createContainer({name,Image:'node:22-alpine',WorkingDir:'/app',Cmd:['sh','-lc','npm install --omit=dev && npm start'],HostConfig:{Binds:[`${dir}:/app:rw`],Memory:Math.max(128,Number(req.body.ramMb)||512)*1024*1024,NanoCpus:Math.max(10,Number(req.body.cpuPct)||100)*10_000_000,RestartPolicy:{Name:'unless-stopped'},SecurityOpt:['no-new-privileges']}})}await c.start().catch(()=>{});res.json({ok:true})}catch(e:any){res.status(500).json({error:e.message})}});
+app.post('/bots/:id/stop',async(req,res)=>{try{await docker.getContainer(cname(req.params.id)).stop();res.json({ok:true})}catch(e:any){res.status(500).json({error:e.message})}});
+app.post('/bots/:id/restart',async(req,res)=>{try{await docker.getContainer(cname(req.params.id)).restart();res.json({ok:true})}catch(e:any){res.status(500).json({error:e.message})}});
+app.get('/bots/:id/logs',async(req,res)=>{try{const out=await docker.getContainer(cname(req.params.id)).logs({stdout:true,stderr:true,tail:200});res.type('text/plain').send(out)}catch(e:any){res.status(500).json({error:e.message})}});
+app.listen(Number(process.env.PORT)||8787,()=>console.log('Camelliera worker listening'));
